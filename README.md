@@ -2,7 +2,7 @@
 
 A virtualized network built to demonstrate core firewall, routing, and network-segmentation fundamentals. A pfSense firewall sits between an untrusted "outside" network and a sealed "inside" network, controlling all traffic between them. A client machine lives behind the firewall and reaches the internet only by routing through it.
 
-**Status:** Milestone 3 complete — an existing Active Directory environment was integrated as a third firewalled zone; a domain client in the user zone authenticates to a domain controller in the AD zone through explicit least-privilege rules, and can reach *only* the permitted AD services.
+**Status:** Milestone 4 complete — the project's four milestones are finished. Suricata IDS is deployed on the LAN interface with the ET Open ruleset, actively inspecting live traffic and generating signature-based alerts. The lab now spans firewalling, multi-zone segmentation, Active Directory integration under least privilege, and network intrusion detection.
 
 ---
 
@@ -139,6 +139,22 @@ An existing, self-contained Active Directory lab (a Server 2022 domain controlle
 
 ---
 
+## Intrusion detection with Suricata (Milestone 4)
+
+Suricata was deployed as an IDS on pfSense to monitor traffic on the segmented network, adding detection on top of the prevention (firewall rules) built in the earlier milestones.
+
+**Deployment choice — Suricata as a pfSense package.** Rather than a dedicated sensor VM, Suricata runs as a package directly on pfSense. On limited lab hardware this avoids another VM, and running on the firewall itself lets it inspect traffic on any chosen interface.
+
+**Interface choice — LAN, and why it matters.** Suricata only sees traffic on the interface it is bound to. It was placed on the **LAN** interface because the threat model for this lab is internal: a compromised user-zone host attempting to reach or attack other zones (e.g. the domain controller). An IDS on WAN would watch only inbound internet traffic and would be blind to that lateral, zone-to-zone activity — the exact thing the segmentation was built to control. Watching LAN means the sensor sees traffic originating from the user zone as it enters the firewall.
+
+**Rules — ET Open.** The free Emerging Threats Open ruleset was enabled (no registration/oinkcode required) and applied to the LAN interface. Suricata rules are organized into categories under a source ruleset; downloading rules and enabling them on an interface are separate steps — rules must be enabled on the interface and Suricata restarted/reloaded there before they take effect.
+
+**Verified behaviour.** Suricata actively inspects LAN traffic and generates signature-based alerts. Live traffic from the user-zone client produced genuine `ET INFO` detections (e.g. flagging Linux package-manager HTTP traffic patterns), confirming the sensor is inspecting traffic on the wire and matching it against the ruleset in real time.
+
+**Honest limitations encountered (documented as learning).** Producing a specific "malicious content" detection was constrained by the free-tier ruleset and lab hardware: the public EICAR test source now redirects HTTP to HTTPS (encrypted payloads can't be inspected without SSL decryption), and loading the full ET Open ruleset is memory-intensive on a 1 GB firewall VM. These are real-world constraints — ruleset tier, encryption, and sensor resources all shape what an IDS can detect — and reasoning through them (interface placement, "rules checked vs. actually loaded," distinguishing benign informational alerts from real threats) is itself the intended skill.
+
+---
+
 ## Verification
 
 All three checks were run from the Ubuntu client with pfSense running.
@@ -174,6 +190,17 @@ Run from **CLIENT01** (now in the LAN zone, `192.168.1.x`), after clearing the p
 
 The headline result is the **contrast between the last two rows**: the client can *authenticate* to a domain controller in a separate firewalled zone, but cannot even *ping* it — because only the four AD service ports to that one host are permitted, and nothing else. That is least privilege, enforced across a firewall boundary and demonstrated end to end.
 
+### Milestone 4 — IDS detection
+
+Suricata running on the LAN interface with the ET Open ruleset.
+
+| Check | Action | Result | What it proves |
+|---|---|---|---|
+| **Sensor running** | Services → Suricata → Interfaces | Suricata shown running on LAN | The IDS is deployed and active on the correct interface |
+| **Live detection** | Normal LAN traffic (package-manager HTTP) | `ET INFO` alerts logged with source = LAN client, correct timestamps | Suricata is inspecting live traffic and matching it against the ruleset in real time |
+
+The alerts confirm the core capability: an IDS inspecting and generating signature-based alerts on the segmented network. Separating the benign informational alerts from anything that would warrant action is exactly the triage a SOC analyst performs.
+
 ---
 
 ## Concepts demonstrated
@@ -194,11 +221,17 @@ The headline result is the **contrast between the last two rows**: the client ca
 - Core Active Directory service ports (DNS, Kerberos, LDAP, SMB) and cross-zone domain authentication
 - DHCP-provided DNS to keep a relocated domain client pointed at its DC
 - Stateful-firewall behaviour and clearing the state table so new rules take effect
+- IDS deployment and interface placement (why the sensor sees only its interface's traffic)
+- Signature-based detection with the ET Open ruleset; rule categories and enabling rules per interface
+- Detection vs. prevention as complementary controls (IDS alongside firewall rules)
+- Triage of informational vs. actionable alerts, and how ruleset tier, encryption, and sensor resources constrain what an IDS can detect
 
 ---
 
-## Next steps
+## Possible future extensions
 
-- Extend isolation to the SERVERS zone (block SERVERS ↔ CORP/LAN as appropriate) for full multi-zone least privilege
-- Introduce an IDS/IPS (e.g. Suricata) on the network and forward logs to a SIEM (Splunk) for monitoring and detection
-- Simulate an attack from a Kali host and map the resulting detections to MITRE ATT&CK
+The lab is complete as a four-milestone project. Natural extensions, if revisited on more capable hardware:
+
+- Attack simulation: introduce a Kali host in the user zone, run attacks toward the DC, and map Suricata detections to MITRE ATT&CK (requires more RAM to run attacker + DC + client + firewall + sensor concurrently)
+- Tuning Suricata (thresholds, category selection) and forwarding alerts to a SIEM for centralized analysis and alerting
+- Extending isolation to the SERVERS zone for full multi-zone least privilege
